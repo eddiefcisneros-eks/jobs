@@ -1,0 +1,544 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: composition.yaml
+# CLASSIFICATION: Unclassified
+# AUTHORS:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: composition.yaml file used for configuring Composite Resources with crossplane during deployment.
+###################################################################################################################
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: bb-eks-cluster
+  labels:
+    provider: aws
+spec:
+  writeConnectionSecretsToNamespace: crossplane-system
+  compositeTypeRef:
+    apiVersion: eks.platformone.io/v1beta1
+    kind: EKSCluster
+  patchSets:
+    - name: common-parameters
+      patches:
+        - fromFieldPath: "spec.parameters.region"
+          toFieldPath: "spec.forProvider.region"
+  resources:
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: Role
+        metadata:
+          labels:
+            role: controlplane
+        spec:
+          forProvider:
+            assumeRolePolicy: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [
+                                "eks.amazonaws.com"
+                            ]
+                        },
+                        "Action": [
+                            "sts:AssumeRole"
+                        ]
+                    }
+                ]
+              }
+      name: controlplaneRole        
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.eks.controlplaneRoleArn
+          policy:
+            fromFieldPath: Optional
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws-us-gov:iam::aws:policy/AmazonEKSClusterPolicy
+            roleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: controlplane
+      name: clusterRolePolicyAttachment 
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: Role
+        metadata:
+          labels:
+            role: nodegroup
+        spec:
+          forProvider:
+            assumeRolePolicy: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [
+                                "ec2.amazonaws.com"
+                            ]
+                        },
+                        "Action": [
+                            "sts:AssumeRole"
+                        ]
+                    }
+                ]
+              }
+      name: nodegroupRole
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.eks.nodegroupRoleArn
+          policy:
+            fromFieldPath: Optional
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws-us-gov:iam::aws:policy/AmazonEKSWorkerNodePolicy
+            roleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      name: workerNodeRolePolicyAttachment
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws-us-gov:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+            roleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      name: csiRolePolicyAttachment
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws-us-gov:iam::aws:policy/AmazonEKS_CNI_Policy
+            roleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      name: cniRolePolicyAttachment
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws-us-gov:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+            roleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+      name: containerRegistryRolePolicyAttachment
+    - name: eks-cluster
+      base:
+        apiVersion: eks.aws.upbound.io/v1beta1
+        kind: Cluster
+        spec:
+          forProvider:
+            enabledClusterLogTypes: ["api","audit","authenticator","controllerManager","scheduler"]
+            version: "1.27"
+            kubernetesNetworkConfig:
+            - serviceIpv4Cidr: "172.20.0.0/16"
+              ipFamily: "ipv4"
+            roleArnSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: controlplane
+            vpcConfig:
+            - endpointPrivateAccess: true
+              endpointPublicAccess: false
+              publicAccessCidrs: []
+              securityGroupIds: []
+              subnetIds: []
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.eks.accountId
+          transforms:
+            - type: string
+              string:
+                type: Regexp
+                regexp:
+                  match: 'arn:aws-us-gov:eks:(.*):(\d+):.*'
+                  group: 2 
+        - fromFieldPath: spec.parameters.serviceIpv4Cidr
+          toFieldPath: spec.forProvider.kubernetesNetworkConfig[0].serviceIpv4Cidr
+        - fromFieldPath: spec.parameters.endpointPublicAccess
+          toFieldPath: spec.forProvider.vpcConfig[0].endpointPublicAccess
+        - fromFieldPath: spec.parameters.securityGroupIds
+          toFieldPath: spec.forProvider.vpcConfig[0].securityGroupIds
+        - fromFieldPath: spec.parameters.subnetIds
+          toFieldPath: spec.forProvider.vpcConfig[0].subnetIds
+        - type: PatchSet
+          patchSetName: common-parameters
+        - fromFieldPath: "spec.parameters.version"
+          toFieldPath: "spec.forProvider.version"
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
+          toFieldPath: status.eks.oidcUrl
+          policy:
+            fromFieldPath: Optional
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.identity[0].oidc[0].issuer
+          toFieldPath: status.eks.oidcProvider
+          transforms:
+            - type: string
+              string:
+                type: TrimPrefix
+                trim: 'https://'
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.endpoint
+          toFieldPath: status.eks.endpoint
+          policy:
+            fromFieldPath: Optional
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.kubernetesNetworkConfig[0].serviceIpv4Cidr
+          toFieldPath: status.eks.serviceIpv4Cidr
+          policy:
+            fromFieldPath: Optional
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.certificateAuthority[0].data
+          toFieldPath: status.eks.certificateAuthorityData
+          policy:
+            fromFieldPath: Optional
+        - type: ToCompositeFieldPath
+          fromFieldPath: metadata.annotations[crossplane.io/external-name]
+          toFieldPath: status.eks.clusterName
+          policy:
+            fromFieldPath: Optional
+    - base:
+        apiVersion: eks.aws.upbound.io/v1beta1
+        kind: ClusterAuth
+        spec:
+          forProvider:
+            region: ""
+            clusterNameRef:
+              name: ""
+      name: kubernetesClusterAuth
+      patches:
+        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+          toFieldPath: spec.writeConnectionSecretToRef.namespace
+        - fromFieldPath: metadata.uid
+          toFieldPath: "spec.writeConnectionSecretToRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-connection-secret"
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: status.eks.clusterName
+          toFieldPath: spec.forProvider.clusterNameRef.name
+          policy:
+            fromFieldPath: Required
+        - type: PatchSet
+          patchSetName: common-parameters
+      connectionDetails:
+        - name: cluster-ca
+          fromConnectionSecretKey: clusterCA
+        - name: apiserver-endpoint
+          fromConnectionSecretKey: endpoint
+        - name: value
+          fromConnectionSecretKey: kubeconfig
+    - base:
+        apiVersion: eks.aws.upbound.io/v1beta1
+        kind: NodeGroup
+        spec:
+          forProvider:
+            launchTemplate:
+            - name: ""
+              version: "$Latest"
+            clusterNameRef:
+              name: ""
+            nodeRoleArnSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: nodegroup
+            scalingConfig:
+            - minSize: 1
+              maxSize: 100
+              desiredSize: 1
+            updateConfig:
+            - maxUnavailable: 1
+            instanceTypes:
+              - m5.xlarge
+      name: nodeGroup
+      patches:
+        - fromFieldPath: status.eks.clusterName
+          toFieldPath: spec.forProvider.clusterNameRef.name
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: status.eks.clusterName
+          toFieldPath: spec.forProvider.launchTemplate[0].name
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.parameters.nodes.count
+          toFieldPath: spec.forProvider.scalingConfig[0].desiredSize
+        - fromFieldPath: spec.parameters.nodes.size
+          toFieldPath: spec.forProvider.scalingConfig[0].maxSize
+          transforms:
+            - type: map
+              map:
+                small: 25
+                medium: 50
+                large: 100
+        - fromFieldPath: spec.parameters.nodes.subnets
+          toFieldPath: spec.forProvider.subnetIds
+        - type: PatchSet
+          patchSetName: common-parameters
+        - fromFieldPath: spec.parameters.nodes.size
+          toFieldPath: spec.forProvider.instanceTypes[0]
+          transforms:
+            - type: map
+              map:
+                small: m5.large
+                medium: m5.2xlarge
+                large: m5.8xlarge
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: OpenIDConnectProvider
+        spec:
+          forProvider:
+            clientIdList:
+              - sts.amazonaws.com
+            thumbprintList:
+              - "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+      name: oidcProvider
+      patches:
+        - fromFieldPath: spec.parameters.thumbprintList
+          toFieldPath: spec.forProvider.thumbprintList
+        - fromFieldPath: status.eks.oidcUrl
+          toFieldPath: spec.forProvider.url
+          policy:
+            fromFieldPath: Required
+        - type: ToCompositeFieldPath
+          fromFieldPath: metadata.annotations[crossplane.io/external-name]
+          toFieldPath: status.eks.oidcarn
+          policy:
+            fromFieldPath: Optional
+        - type: CombineFromComposite
+          combine:
+            # The patch will only be applied when all variables have non-zero values.
+            variables:
+            - fromFieldPath: status.eks.accountId
+            - fromFieldPath: status.eks.oidcProvider
+            strategy: string
+            string:
+              fmt: "arn:aws-us-gov:iam::%s:oidc-provider/%s"
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+    - name: launchtemplate
+      base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: LaunchTemplate
+        spec:
+          forProvider:
+            name: ""
+            imageId: ""
+            keyName: ""
+            vpcSecurityGroupIds: []
+            userData: ""
+            blockDeviceMappings:
+            - deviceName: "/dev/sda1"
+              ebs:
+              - deleteOnTermination: "true"
+                encrypted: "false"
+                volumeSize: 50
+                volumeType: gp2
+                kmsKeyId: ""
+            - deviceName: "/dev/sdb"
+              ebs:
+              - deleteOnTermination: "true"
+                encrypted: "false"
+                volumeSize: 60
+                volumeType: gp2
+                kmsKeyId: ""
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: status.eks.clusterName
+          policy:
+            fromFieldPath: Required
+          toFieldPath: "spec.forProvider.name"
+        - fromFieldPath: spec.parameters.nodes.securityGroupIDs
+          toFieldPath: spec.forProvider.vpcSecurityGroupIds
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.parameters.volumeSize
+          toFieldPath: spec.forProvider.blockDeviceMappings[1].ebs[0].volumeSize
+        - fromFieldPath: spec.parameters.kmsKeyId
+          toFieldPath: spec.forProvider.blockDeviceMappings[0].ebs[0].kmsKeyId
+        - fromFieldPath: spec.parameters.kmsKeyId
+          toFieldPath: spec.forProvider.blockDeviceMappings[1].ebs[0].kmsKeyId
+        - fromFieldPath: spec.parameters.encrypted
+          toFieldPath: spec.forProvider.blockDeviceMappings[0].ebs[0].encrypted
+        - fromFieldPath: spec.parameters.encrypted
+          toFieldPath: spec.forProvider.blockDeviceMappings[1].ebs[0].encrypted
+        - fromFieldPath: spec.parameters.nodes.imageId
+          toFieldPath: spec.forProvider.imageId
+          policy:
+            fromFieldPath: Required
+        - fromFieldPath: spec.parameters.keyName
+          toFieldPath: spec.forProvider.keyName
+          policy:
+            fromFieldPath: Required
+        - type: PatchSet
+          patchSetName: common-parameters
+        - type: CombineFromComposite
+          policy:
+            fromFieldPath: Required
+          combine:
+            variables:
+            - fromFieldPath: status.eks.clusterName
+            - fromFieldPath: status.eks.certificateAuthorityData
+            - fromFieldPath: status.eks.endpoint
+            - fromFieldPath: status.eks.serviceIpv4Cidr
+            strategy: string
+            string:
+              fmt: |
+                #!/bin/bash
+                sudo /etc/eks/bootstrap.sh  %s --b64-cluster-ca %s  --apiserver-endpoint %s --container-runtime containerd --service-ipv4-cidr %s
+          toFieldPath: spec.forProvider.userData
+          transforms:
+          - type: string
+            string:
+               type: Convert
+               convert: ToBase64
+    - name: aws-auth
+      base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: Object
+        spec:
+          providerConfigRef: 
+            name: ""
+          forProvider:
+            manifest:
+                apiVersion: v1
+                data:
+                  mapRoles: ""
+                  mapUsers: ""
+                kind: ConfigMap
+                metadata:
+                  annotations: 
+                    crossplane.io/external-name: aws-auth
+                  namespace: kube-system
+                  name: aws-auth
+      patches:
+        - fromFieldPath: spec.parameters.mapUsers
+          toFieldPath: spec.forProvider.manifest.data.mapUsers
+        - type: FromCompositeFieldPath
+          fromFieldPath: status.eks.k8sProviderConfig
+          toFieldPath: spec.providerConfigRef.name
+          policy:
+            fromFieldPath: Required
+        - type: CombineFromComposite
+          combine:
+            # The patch will only be applied when all variables have non-zero values.
+            variables:
+            - fromFieldPath: status.eks.nodegroupRoleArn
+            - fromFieldPath: spec.parameters.bastionRoleArn
+            - fromFieldPath: spec.parameters.bastionInstanceId
+            strategy: string
+            string:
+              fmt: |
+                    - groups:
+                      - system:bootstrappers
+                      - system:nodes
+                      rolearn: %s
+                      username: system:node:{{EC2PrivateDNSName}}
+                    - groups:
+                      - system:masters
+                      rolearn: %s
+                      username: %s
+          toFieldPath: spec.forProvider.manifest.data.mapRoles
+    - base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: ProviderConfig
+        spec:
+          credentials:
+            source: Secret
+            secretRef:
+              name: ""
+              namespace: ""
+              key: kubeconfig
+      name: k8sproviderConfig
+      readinessChecks:
+        - type: None
+      patches:
+        - fromFieldPath: spec.writeConnectionSecretToRef.namespace
+          toFieldPath: spec.credentials.secretRef.namespace
+        - fromFieldPath: metadata.uid
+          toFieldPath: "spec.credentials.secretRef.name"
+          transforms:
+            - type: string
+              string:
+                fmt: "%s-connection-secret"
+          policy:
+            fromFieldPath: Required
+        - type: ToCompositeFieldPath
+          fromFieldPath: metadata.name
+          toFieldPath: status.eks.k8sProviderConfig
+    - base:
+        apiVersion: eks.aws.upbound.io/v1beta1
+        kind: Addon
+        spec:
+          forProvider:
+            addonName: aws-ebs-csi-driver
+            addonVersion: "v1.19.0-eksbuild.2"
+            clusterNameSelector:
+              matchControllerRef: true
+            region: ""
+      name: awscsiAddon
+      patches:
+        - type: PatchSet
+          patchSetName: common-parameters
+        - fromFieldPath: spec.parameters.csiAddonVersion
+          toFieldPath: spec.forProvider.addonVersion
+    - base:
+        apiVersion: kubernetes.crossplane.io/v1alpha1
+        kind: Object
+        spec:
+          providerConfigRef: 
+            name: ""
+          forProvider:
+            manifest:
+              apiVersion: storage.k8s.io/v1
+              kind: StorageClass
+              metadata:
+                name: gp3
+                annotations:
+                  storageclass.kubernetes.io/is-default-class: "true"
+              allowVolumeExpansion: true
+              provisioner: ebs.csi.aws.com
+              volumeBindingMode: WaitForFirstConsumer
+              parameters:
+                type: gp3
+      name: storageclass
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: status.eks.k8sProviderConfig
+          toFieldPath: spec.providerConfigRef.name
+          policy:
+            fromFieldPath: Required

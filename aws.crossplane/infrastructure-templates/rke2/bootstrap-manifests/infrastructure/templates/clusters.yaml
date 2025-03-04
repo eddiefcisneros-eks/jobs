@@ -1,0 +1,49 @@
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - Prototype RKE2 Platform Automation over MITRE AWS xcloud environmant as a base infrastructure for
+# Big Bang deployment
+# CLASSIFICATION: Unclassified
+# Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2024
+###################################################################################################################
+
+---
+{{ if .Values.infrastructure}}
+{{- range $cluster := .Values.infrastructure.RKE2Cluster}}
+apiVersion: rke2.platformone.io/v1beta1
+kind: RKE2Cluster
+metadata:
+  name: {{ $cluster.name }}
+  annotations:
+    crossplane.io/external-name: {{ $cluster.name }}
+  {{- with $cluster.customlabels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parameters:
+    imageId: {{ $cluster.imageId }}
+    nodes:
+      count: {{ $cluster.nodes.count }}
+      size: {{ $cluster.nodes.size }}
+    subnetIds: 
+    {{- range $cluster.subnetIds }}
+    - {{.}}{{- end }}
+    securityGroupIds: 
+    {{- range $cluster.securityGroupIds }}
+    - {{.}}{{- end }}
+    region: {{ $cluster.region }}
+    keyName: {{ $cluster.keyName }}
+    token: {{ $cluster.token }}
+    volumeSize: {{ $cluster.volumeSize}}
+{{ end }}
+{{ end }}
+
+

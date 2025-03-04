@@ -1,0 +1,163 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: definition.yaml
+# CLASSIFICATION: Unclassified
+# AUTHOR:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: yaml manifest part of Crossplane composite template to deploy EKS
+###################################################################################################################
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: eksclusters.eks.platformone.io
+spec:
+  group: eks.platformone.io
+  names:
+    kind: EKSCluster
+    plural: eksclusters
+  claimNames:
+    kind: CiCluster
+    plural: ciclusters
+  connectionSecretKeys:
+    - cluster-ca
+    - apiserver-endpoint
+    - value
+  versions:
+  - name: v1beta1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        description: EKSCluster is the Schema for the composite resource that stands up an EKS cluster and associated resources
+        type: object
+        properties:
+          apiVersion: 
+            description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources"
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the desired state of the EKSCluster composite
+            type: object
+            properties:
+              parameters:
+                type: object
+                description: parameters defines the configuration of the EKSCluster composite
+                properties:
+                  nodes:
+                    type: object
+                    description: EKS nodegroup and launchtemplate configuration parameters.
+                    properties:
+                      imageId: 
+                        type: string
+                        description: worker node AMI id
+                      subnets:
+                        type: array
+                        description: Subnets to deploy worker nodes into
+                        items:
+                          type: string
+                      count:
+                        type: integer
+                        description: Number of worker nodes to deploy 
+                      securityGroupIDs:
+                        type: array
+                        description: Security groups to associate with the worker nodes
+                        items:
+                          type: string
+                      size:
+                        type: string
+                        description: Size of node. Accepts "small" to provision m5.large "medium" to provision m5.xlarge and "large" to provision m5.2xlarge ec2 instances
+                        enum:
+                        - small
+                        - medium
+                        - large
+                    required:
+                    - count
+                    - size
+                    - subnets
+                    - imageId
+                    - securityGroupIDs
+                  kmsKeyId:
+                    type: string
+                    description: kms key id
+                  encrypted:
+                    type: string
+                    description: Enables ebs encryption
+                  thumbprintList:
+                    type: array
+                    items:
+                      type: string
+                      description: the thumbprint for the IAM identity provider. Defaults to us-gov-east-1 thumbprint
+                  csiAddonVersion:
+                    type: string
+                    description: AWS EBS CSI addon version. Defaults to  v1.19.0-eksbuild.2
+                  serviceIpv4Cidr:
+                    type: string
+                    description: The IPv4 CIDR block to assign Kubernetes pod and service IP addresses from. If you don't specify a block, defaults to  172.20.0.0/16. We recommend that you specify a block that does not overlap with resources in other networks that are peered or connected to your VPC. 
+                  volumeSize:
+                    type: integer
+                    description: Size of data volume on worker nodes. Defaults to 60G
+                  keyName:
+                    type: string
+                    description: keypair to ssh into worker nodes 
+                  subnetIds:
+                    type: array
+                    description: subnet ids for the EKS cluster private endpoint
+                    items:
+                      type: string
+                  securityGroupIds:
+                    type: array
+                    description: security group ids to associate with the EKS cluster private endpoint
+                    items:
+                      type: string
+                  region:
+                    description: AWS Geographic location of this cluster
+                    type: string       
+                    enum:
+                    - us-gov-east-1
+                    - us-gov-west-1
+                  mapUsers:
+                    type: string       
+                    description: User role mapping to privileges on the cluster
+                  bastionRoleArn:
+                    description: Bastion Role of the bastion from where admin access is to be provided for the cluster
+                    type: string     
+                  bastionInstanceId:
+                    description: Bastion Instance Id of the bastion from where admin access is to be provided for the cluster
+                    type: string     
+                  version:
+                    description: Kubernetes version of the EKS cluster to be provisioned. Defaults to 1.27
+                    type: string
+                  endpointPublicAccess:
+                    description: Enable EKS control Plane Public Access Endpoint. Defaults to false
+                    type: boolean
+                required:
+                  - region
+                  - nodes
+                  - securityGroupIds
+                  - subnetIds
+                  - keyName
+            required:
+              - parameters
+          status:
+            description: Status represents the observed state of the EKS cluster after resources have been provisioned
+            properties:
+              eks:
+                description: Freeform field containing status information for eks
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            type: object

@@ -1,0 +1,180 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: definition.yaml
+# CLASSIFICATION: Unclassified
+# AUTHORS:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: yaml manifest part of Crossplane composite template to deploy EKS
+###################################################################################################################
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: eksnetworks.eks.platformone.io
+spec:
+  group: eks.platformone.io
+  names:
+    kind: EKSNetwork
+    plural: eksnetworks
+  versions:
+  - name: v1beta1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        description: EKSCluster is the Schema for the composite resource that stands up an EKS cluster and associated resources
+        type: object
+        properties:
+          apiVersion:
+            description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources"
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            description: Spec defines the desired state of the EKSNetwork composite
+            properties:
+              parameters:
+                type: object
+                description: parameters defines the configuration of the EKSNetwork composite
+                properties:
+                  bastion:
+                    type: object
+                    description: EKS bastion configuration parameters
+                    properties:
+                      imageId:
+                        type: string
+                        description: AMI id to be used to provision  the bastion instance
+                      instanceType:
+                        description: Type of EC2 instance to be provisioned as bastion instance
+                        type: string
+                    required:
+                    - imageId
+                    - instanceType
+                  keyName:
+                    type: string
+                    description: keypair to ssh into bastion nodes
+                  publicSubnetTag:
+                    type: string
+                    description: Tag for the public subnets. This should be  the name of the EKS cluster that is provisioned
+                  volumeSize:
+                    type: integer
+                    description: Size of data volume on bastion instance - defaults to 60G
+                  vpcCidr:
+                    description: The CIDR block to be associated with the new VPC.
+                    type: string
+                  publicsubnet01:
+                    type: object
+                    description: Configuration of the first public subnet within the new VPC
+                    properties:
+                      cidrBlock:
+                        type: string
+                        description: CIDR range of the subnet
+                      az:
+                        type: string
+                        description: The AZ to place this subnet in
+                    required:
+                    - cidrBlock
+                    - az
+                  publicsubnet02:
+                    type: object
+                    description: Configuration of the second public subnet within the new VPC
+                    properties:
+                      cidrBlock:
+                        type: string
+                        description: CIDR range of the subnet
+                      az:
+                        type: string
+                        description: The AZ to place this subnet in
+                    required:
+                    - cidrBlock
+                    - az
+                  publicsubnet03:
+                    type: object
+                    description: Configuration of the third public subnet within the new VPC
+                    properties:
+                      cidrBlock:
+                        type: string
+                        description: CIDR range of the subnet
+                      az:
+                        type: string
+                        description: The AZ to place this subnet in
+                    required:
+                    - cidrBlock
+                    - az
+                  privatesubnet01:
+                    type: object
+                    description: Configuration of the first private subnet within the new VPC
+                    properties:
+                      cidrBlock:
+                        type: string
+                        description: CIDR range of the subnet
+                      az:
+                        type: string
+                        description: The AZ to place this subnet in
+                    required:
+                    - cidrBlock
+                    - az
+                  privatesubnet02:
+                    type: object
+                    description: Configuration of the second private subnet within the new VPC
+                    properties:
+                      cidrBlock:
+                        type: string
+                        description: CIDR range of the subnet
+                      az:
+                        type: string
+                        description: The AZ to place this subnet in
+                    required:
+                    - cidrBlock
+                    - az
+                  privatesubnet03:
+                    type: object
+                    description: Configuration of the third private subnet within the new VPC
+                    properties:
+                      cidrBlock:
+                        type: string
+                        description: CIDR range of the subnet
+                      az:
+                        type: string
+                        description: The AZ to place this subnet in
+                    required:
+                    - cidrBlock
+                    - az
+                  region:
+                    description: Geographic location of this VPC
+                    type: string       
+                required:
+                  - region
+                  - vpcCidr
+                  - publicsubnet01
+                  - publicsubnet02
+                  - publicsubnet03
+                  - privatesubnet01
+                  - privatesubnet02
+                  - privatesubnet03
+                  - bastion
+                  - keyName
+            required:
+              - parameters
+          status:
+            description: Status represents the observed state of the network after resources have been provisioned
+            properties:
+              eks:
+                description: Freeform field containing status information for eks
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            type: object

@@ -1,0 +1,40 @@
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - Prototype RKE2 Platform Automation over MITRE AWS xcloud environmant as a base infrastructure for
+# Big Bang deployment
+# CLASSIFICATION: Unclassified
+# Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2024
+###################################################################################################################
+
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: aws-deployment-config
+  namespace: crossplane-system
+spec:
+  deploymentTemplate:
+    spec:
+      selector:
+        matchLabels:
+          pkg.crossplane.io/provider: provider-aws-iam
+      template:
+        spec:
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          containers:
+          - name: package-runtime
+            env:
+            - name: AWS_DEFAULT_REGION
+              value: AWS_DEFAULT_REGION_VALUE
+            args:
+            - "--debug"

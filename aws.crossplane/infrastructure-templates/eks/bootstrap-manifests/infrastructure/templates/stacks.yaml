@@ -1,0 +1,66 @@
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: stacks.yaml
+# CLASSIFICATION: Unclassified
+# AUTHORS:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: Helm manifest to compose and customize infrastructure to be deployed
+##################################################################################################################
+---
+{{ if .Values.infrastructure.uxp}}
+{{- range $cluster := .Values.infrastructure.uxp}}
+apiVersion: eks.platformone.io/v1beta1
+kind: EKSStack
+metadata:
+  name: {{ $cluster.name }}
+  annotations:
+    crossplane.io/external-name: {{ $cluster.name }}
+  {{- with $cluster.customlabels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parameters:
+    region: {{ $cluster.region }}
+    vpcCidr: {{ $cluster.vpcCidr }}
+    publicsubnet01:
+      cidrBlock: {{ $cluster.publicsubnet01.cidrBlock }}
+      az: {{ $cluster.publicsubnet01.az }}
+    publicsubnet02:
+      cidrBlock: {{ $cluster.publicsubnet02.cidrBlock }}
+      az: {{ $cluster.publicsubnet02.az }}
+    publicsubnet03:
+      cidrBlock: {{ $cluster.publicsubnet03.cidrBlock }}
+      az: {{ $cluster.publicsubnet03.az }}
+    privatesubnet01:
+      cidrBlock: {{ $cluster.privatesubnet01.cidrBlock }}
+      az: {{ $cluster.privatesubnet01.az }}
+    privatesubnet02:
+      cidrBlock: {{ $cluster.privatesubnet02.cidrBlock }}
+      az: {{ $cluster.privatesubnet02.az }}
+    privatesubnet03:
+      cidrBlock: {{ $cluster.privatesubnet03.cidrBlock }}
+      az: {{ $cluster.privatesubnet03.az }}
+    bastion:
+      imageId: {{ $cluster.bastion.imageId }}
+      instanceType: {{ $cluster.bastion.instanceType }}
+    nodes:
+      count: {{ $cluster.nodes.count }}
+      size: {{ $cluster.nodes.size }}
+      imageId: {{ $cluster.nodes.imageId }}
+    version: {{ $cluster.version | quote }}
+    keyName: {{ $cluster.keyName }}
+    mapUsers: |
+{{ $cluster.mapUsers | indent 6}}
+
+{{ end }}
+{{ end }}

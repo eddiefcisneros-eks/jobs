@@ -1,0 +1,124 @@
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - Prototype RKE2 Platform Automation over MITRE AWS xcloud environmant as a base infrastructure for
+# Big Bang deployment
+# CLASSIFICATION: Unclassified
+# Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2024
+###################################################################################################################
+
+
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ecr-credentials-sync
+  namespace: crossplane-system
+rules:
+- apiGroups: [""]
+  resources:
+  - secrets
+  verbs:
+  - get
+  - create
+  - patch
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: ecr-credentials-sync
+  namespace: crossplane-system
+subjects:
+- kind: ServiceAccount
+  name: ecr-credentials-sync
+roleRef:
+  kind: Role
+  name: ecr-credentials-sync
+  apiGroup: ""
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecr-credentials-sync
+  namespace: crossplane-system
+  # Uncomment and edit if using IRSA
+  # annotations:
+  #   eks.amazonaws.com/role-arn: <role arn>
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-credentials-sync
+  namespace: crossplane-system
+spec:
+  suspend: false
+  schedule: "*/1 * * * *"
+  failedJobsHistoryLimit: 1
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          imagePullSecrets: 
+            - name: private-registry
+          serviceAccountName: ecr-credentials-sync
+          restartPolicy: Never
+          volumes:
+          - name: token
+            emptyDir:
+              medium: Memory
+          - name: aws-creds
+            secret:
+              secretName: aws-creds
+          initContainers:
+          - image: registry1.dso.mil/ironbank/opensource/amazon/aws-cli:latest
+            name: get-token
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /.aws/credentials
+            - name: AWS_REGION
+              value: AWS_REGION_VALUE
+            volumeMounts:
+            - mountPath: /token
+              name: token
+            - mountPath: /.aws
+              name: aws-creds
+            command:
+            - /bin/sh
+            - -ce
+            - aws ecr get-login-password --region ${AWS_REGION} --no-verify-ssl > /token/ecr-token
+          containers:
+          - image: registry1.dso.mil/ironbank/big-bang/utilities:latest
+            name: create-secret
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: AWS_SHARED_CREDENTIALS_FILE
+              value: /.aws/credentials
+            - name: SECRET_NAME
+              value: ecr-credentials
+            - name: ECR_REGISTRY
+              value: ECR_REGISTRY_VALUE
+            volumeMounts:
+            - mountPath: /token
+              name: token
+            - mountPath: /.aws
+              name: aws-creds
+            command:
+            - /bin/sh
+            - -ce
+            - |-
+              kubectl create secret docker-registry ecr-credentials \
+                --namespace=crossplane-system \
+                --dry-run=client \
+                --docker-server=${ECR_REGISTRY}  \
+                --docker-username=AWS \
+                --docker-password="$(cat /token/ecr-token)" \
+                -o yaml | kubectl apply -f -     

@@ -1,0 +1,256 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: composition.yaml
+# CLASSIFICATION: Unclassified
+# AUTHORS:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: composition.yaml file used for configuring Composite Resources with crossplane during deployment.
+###################################################################################################################
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: stack-composition
+  labels:
+    provider: kubernetes
+spec:
+  writeConnectionSecretsToNamespace: crossplane-system
+  compositeTypeRef:
+    apiVersion: eks.platformone.io/v1beta1
+    kind: EKSStack
+  resources:
+    - base:
+        apiVersion: eks.platformone.io/v1beta1
+        kind: EKSNetwork
+        spec:
+          parameters:
+            bastion:
+              imageId: ""
+              instanceType: ""
+            keyName: ""
+            volumeSize: 60
+            region: ""
+            roleArn: ""
+            vpcCidr: ""
+            publicsubnet01: 
+              cidrBlock: ""
+              az: ""
+            publicsubnet02: 
+              cidrBlock: ""
+              az: ""
+            publicsubnet03: 
+              cidrBlock: ""
+              az: ""
+            privatesubnet01:
+              cidrBlock: ""
+              az: ""
+            privatesubnet02:
+              cidrBlock: ""
+              az: ""
+            privatesubnet03:
+              cidrBlock: ""
+              az: ""
+      patches:
+      - fromFieldPath: spec.parameters.region
+        toFieldPath: spec.parameters.region
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.vpcCidr
+        toFieldPath: spec.parameters.vpcCidr
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.publicsubnet01.cidrBlock
+        toFieldPath: spec.parameters.publicsubnet01.cidrBlock
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.publicsubnet01.az
+        toFieldPath: spec.parameters.publicsubnet01.az
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.publicsubnet02.cidrBlock
+        toFieldPath: spec.parameters.publicsubnet02.cidrBlock
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.publicsubnet02.az
+        toFieldPath: spec.parameters.publicsubnet02.az
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.publicsubnet03.cidrBlock
+        toFieldPath: spec.parameters.publicsubnet03.cidrBlock
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.publicsubnet03.az
+        toFieldPath: spec.parameters.publicsubnet03.az
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.privatesubnet01.cidrBlock
+        toFieldPath: spec.parameters.privatesubnet01.cidrBlock
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.privatesubnet01.az
+        toFieldPath: spec.parameters.privatesubnet01.az
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.privatesubnet02.cidrBlock
+        toFieldPath: spec.parameters.privatesubnet02.cidrBlock
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.privatesubnet02.az
+        toFieldPath: spec.parameters.privatesubnet02.az
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.privatesubnet03.cidrBlock
+        toFieldPath: spec.parameters.privatesubnet03.cidrBlock
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.privatesubnet03.az
+        toFieldPath: spec.parameters.privatesubnet03.az
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.volumeSize
+        toFieldPath: spec.parameters.volumeSize
+      - fromFieldPath: spec.parameters.keyName
+        toFieldPath: spec.parameters.keyName
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.bastion.imageId
+        toFieldPath: spec.parameters.bastion.imageId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.bastion.instanceType
+        toFieldPath: spec.parameters.bastion.instanceType
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.clusterName
+        toFieldPath: spec.parameters.publicSubnetTag
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.kmsKeyId
+        toFieldPath: status.eks.kmsKeyId
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.securityGroupIds
+        toFieldPath: status.eks.securityGroupIds
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.accountId
+        toFieldPath: status.eks.accountId
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.bastionRoleArn
+        toFieldPath: status.eks.bastionRoleArn
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.bastionInstanceId
+        toFieldPath: status.eks.bastionInstanceId
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.subnetIds
+        toFieldPath: status.eks.subnetIds
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.publicSubnetIds
+        toFieldPath: status.eks.publicSubnetIds
+    - base:
+        apiVersion: eks.platformone.io/v1beta1
+        kind: EKSCluster
+        spec:
+          parameters:
+            endpointPublicAccess: true
+            volumeSize: 60
+            csiAddonVersion: "v1.19.0-eksbuild.2"
+            region: ""
+            version: "1.27"
+            serviceIpv4Cidr: "172.20.0.0/16"
+            securityGroupIds: []
+            subnetIds: []
+            kmsKeyId: ""
+            encrypted: "true"
+            keyName: ""
+            thumbprintList: 
+            - "9e99a48a9960b14926bb7f3b02e22da2b0ab7280"
+            mapUsers: []
+            nodes:
+                count: 1
+                size: ""
+                securityGroupIDs: []
+                subnets: []
+                imageId: ""
+      patches:
+      - fromFieldPath: spec.parameters.region
+        toFieldPath: spec.parameters.region
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.mapUsers
+        toFieldPath: spec.parameters.mapUsers
+      - fromFieldPath: spec.parameters.serviceIpv4Cidr
+        toFieldPath: spec.parameters.serviceIpv4Cidr
+      - fromFieldPath: spec.parameters.thumbprintList
+        toFieldPath: spec.parameters.thumbprintList
+      - fromFieldPath: spec.parameters.csiAddonVersion
+        toFieldPath: spec.parameters.csiAddonVersion
+      - fromFieldPath: spec.parameters.version
+        toFieldPath: spec.parameters.version
+      - fromFieldPath: status.eks.securityGroupIds
+        toFieldPath: spec.parameters.securityGroupIds
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.subnetIds
+        toFieldPath: spec.parameters.subnetIds
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.kmsKeyId
+        toFieldPath: spec.parameters.kmsKeyId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.bastionRoleArn
+        toFieldPath: spec.parameters.bastionRoleArn
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.bastionInstanceId
+        toFieldPath: spec.parameters.bastionInstanceId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.volumeSize
+        toFieldPath: spec.parameters.volumeSize
+      - fromFieldPath: spec.parameters.nodes.count
+        toFieldPath: spec.parameters.nodes.count
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.nodes.size
+        toFieldPath: spec.parameters.nodes.size
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.nodes.imageId
+        toFieldPath: spec.parameters.nodes.imageId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.keyName
+        toFieldPath: spec.parameters.keyName
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.subnetIds
+        toFieldPath: spec.parameters.nodes.subnets
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.eks.securityGroupIds
+        toFieldPath: spec.parameters.nodes.securityGroupIDs
+        policy:
+          fromFieldPath: Required
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.k8sProviderConfig
+        toFieldPath: status.eks.k8sProviderConfig
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.eks.clusterName
+        toFieldPath: status.eks.clusterName
+      connectionDetails:
+        - name: cluster-ca
+          fromConnectionSecretKey: cluster-ca
+        - name: apiserver-endpoint
+          fromConnectionSecretKey: apiserver-endpoint
+        - name: value
+          fromConnectionSecretKey: value
+

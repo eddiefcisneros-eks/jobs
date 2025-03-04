@@ -1,0 +1,584 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - Prototype RKE2 Platform Automation over MITRE AWS xcloud environmant as a base infrastructure for
+# Big Bang deployment
+# CLASSIFICATION: Unclassified
+# Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2024
+###################################################################################################################
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: bb-rke2-cluster
+  labels:
+    provider: aws
+spec:
+  writeConnectionSecretsToNamespace: crossplane-system
+  compositeTypeRef:
+    apiVersion: rke2.platformone.io/v1beta1
+    kind: RKE2Cluster
+  patchSets:
+    - name: common-parameters
+      patches:
+        - fromFieldPath: "spec.parameters.region"
+          toFieldPath: "spec.forProvider.region"
+  resources:
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: Role
+        metadata:
+          labels:
+            role: rke2Role
+        spec:
+          forProvider:
+            assumeRolePolicy: |
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [
+                                "ec2.amazonaws.com"
+                            ]
+                        },
+                        "Action": [
+                            "sts:AssumeRole"
+                        ]
+                    }
+                ]
+              }
+      name: rke2Role        
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.rke2.rke2RoleArn
+          policy:
+            fromFieldPath: Optional
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.rke2.accountId
+          transforms:
+            - type: string
+              string:
+                type: Regexp
+                regexp:
+                  match: 'arn:aws:iam::(\d+):.*'
+                  group: 1 
+
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/AdministratorAccess
+            roleSelector:
+              matchControllerRef: true
+              matchLabels:
+                role: rke2Role
+      name: clusterRolePolicyAttachment 
+    - base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: InstanceProfile
+        spec:
+          forProvider:
+            roleSelector: 
+              matchControllerRef: true
+      name: node-InstanceProfile
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.rke2.nodeInstanceProfile
+          policy:
+            fromFieldPath: Required
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.id
+          toFieldPath: status.rke2.nodeInstanceProfileId
+          policy:
+            fromFieldPath: Required
+    - base:
+        apiVersion: kms.aws.upbound.io/v1beta1
+        kind: Key
+        spec:
+          forProvider:
+            deletionWindowInDays: 7
+            region: ""
+            enableKeyRotation: true
+            keyUsage: "ENCRYPT_DECRYPT"
+            customerMasterKeySpec: "SYMMETRIC_DEFAULT"
+            isEnabled: true
+            policy: ""
+
+      name: kmsKey
+      patches:
+        - type: PatchSet
+          patchSetName: common-parameters
+        - type: CombineFromComposite
+          policy:
+            fromFieldPath: Required
+          toFieldPath: spec.forProvider.policy
+          combine:
+            variables:
+            - fromFieldPath: status.rke2.accountId
+            - fromFieldPath: status.rke2.rke2RoleArn
+            - fromFieldPath: status.rke2.accountId
+            - fromFieldPath: status.rke2.accountId
+            strategy: string
+            string:
+              fmt: |
+                {
+                    "Id": "key-consolepolicy-3",
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "Enable IAM User Permissions",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": "arn:aws:iam::%s:root"
+                            },
+                            "Action": "kms:*",
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow access for Key Administrators",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": "%s"
+                            },
+                            "Action": [
+                                "kms:Create*",
+                                "kms:Describe*",
+                                "kms:Enable*",
+                                "kms:List*",
+                                "kms:Put*",
+                                "kms:Update*",
+                                "kms:Revoke*",
+                                "kms:Disable*",
+                                "kms:Get*",
+                                "kms:Delete*",
+                                "kms:TagResource",
+                                "kms:UntagResource",
+                                "kms:ScheduleKeyDeletion",
+                                "kms:CancelKeyDeletion"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow use of the key",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": "arn:aws:iam::%s:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+                            },
+                            "Action": [
+                                "kms:Encrypt",
+                                "kms:Decrypt",
+                                "kms:ReEncrypt*",
+                                "kms:GenerateDataKey*",
+                                "kms:DescribeKey"
+                            ],
+                            "Resource": "*"
+                        },
+                        {
+                            "Sid": "Allow attachment of persistent resources",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": "arn:aws:iam::%s:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+                            },
+                            "Action": [
+                                "kms:CreateGrant",
+                                "kms:ListGrants",
+                                "kms:RevokeGrant"
+                            ],
+                            "Resource": "*",
+                            "Condition": {
+                                "Bool": {
+                                    "kms:GrantIsForAWSResource": "true"
+                                }
+                            }
+                        }
+                    ]
+                }
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.arn
+          toFieldPath: status.rke2.kmsKeyId
+          policy:
+            fromFieldPath: Required
+
+
+    - base:
+        apiVersion: elb.aws.upbound.io/v1beta1
+        kind: ELB
+        metadata:
+          labels:
+            role: masterNodesElb
+        spec:
+          forProvider:
+            region: ""
+            listener:
+            - instancePort: 9345
+              instanceProtocol: TCP
+              lbPort: 9345
+              lbProtocol: TCP
+            - instancePort: 6443
+              instanceProtocol: TCP
+              lbPort: 6443
+              lbProtocol: TCP
+            internal: true
+            securityGroups: []
+            subnets: []
+            healthCheck:
+            - healthyThreshold: 10
+              target: "TCP:6443"
+              unhealthyThreshold: 2
+              timeout: 3
+              interval: 5
+      name: elb
+      patches:
+      - type: PatchSet
+        patchSetName: common-parameters
+      - fromFieldPath: spec.parameters.subnetIds
+        toFieldPath: spec.forProvider.subnets
+      - fromFieldPath: spec.parameters.securityGroupIds
+        toFieldPath: spec.forProvider.securityGroups
+      - type: ToCompositeFieldPath
+        fromFieldPath: metadata.annotations[crossplane.io/external-name]
+        toFieldPath: status.rke2.masterElbName
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.dnsName
+        toFieldPath: status.rke2.masterElbDnsName
+
+    - base:
+        apiVersion: autoscaling.aws.upbound.io/v1beta1
+        kind: AutoscalingGroup
+        metadata:
+          labels:
+            role: masterNodesAS
+        spec:
+          forProvider:
+            vpcZoneIdentifier: []
+            launchTemplate:
+            - idSelector:
+                matchLabels:
+                  role: masterNodesLT
+            maxSize: 3
+            minSize: 3
+            region: ""
+      name: masterNodesAS
+      patches:
+      - type: PatchSet
+        patchSetName: common-parameters
+      - fromFieldPath: spec.parameters.subnetIds
+        toFieldPath: spec.forProvider.vpcZoneIdentifier
+      - fromFieldPath: status.rke2.masterElbName
+        toFieldPath: spec.forProvider.loadBalancers
+        type: FromCompositeFieldPath
+        policy:
+          fromFieldPath: Required
+    - name: masterNodesLT
+      base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: LaunchTemplate
+        metadata:
+          labels:
+            role: masterNodesLT
+        spec:
+          forProvider:
+            region: ""
+            name: ""
+            imageId: ""
+            keyName: ""
+            vpcSecurityGroupIds: []
+            userData: ""
+            instanceType: ""
+            iamInstanceProfile:
+            - arnSelector:
+                matchControllerRef: true
+            blockDeviceMappings:
+            - deviceName: "/dev/sda1"
+              ebs:
+              - deleteOnTermination: "true"
+                encrypted: "true"
+                volumeSize: 50
+                volumeType: gp2
+                kmsKeyIdSelector:
+                  matchControllerRef: true
+            - deviceName: "/dev/sdb"
+              ebs:
+              - deleteOnTermination: "true"
+                encrypted: "true"
+                volumeSize: 50
+                volumeType: gp2
+                kmsKeyIdSelector:
+                  matchControllerRef: true
+      patches:
+      - type: PatchSet
+        patchSetName: common-parameters
+      - fromFieldPath: spec.parameters.nodes.size
+        toFieldPath: spec.forProvider.instanceType
+        transforms:
+          - type: map
+            map:
+              small: m5.large
+              medium: m5.2xlarge
+              large: m5.8xlarge
+      - fromFieldPath: spec.parameters.securityGroupIds
+        toFieldPath: spec.forProvider.vpcSecurityGroupIds
+      - fromFieldPath: spec.parameters.volumeSize
+        toFieldPath: spec.forProvider.blockDeviceMappings[1].ebs[0].volumeSize
+      - fromFieldPath: spec.parameters.imageId
+        toFieldPath: spec.forProvider.imageId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.keyName
+        toFieldPath: spec.forProvider.keyName
+        policy:
+          fromFieldPath: Required
+      - type: CombineFromComposite
+        policy:
+          fromFieldPath: Required
+        combine:
+          variables:
+          - fromFieldPath: spec.parameters.token
+          - fromFieldPath: status.rke2.masterElbDnsName
+          - fromFieldPath: status.rke2.bucketName
+          strategy: string
+          string:
+            fmt: |
+              #!/bin/bash
+              sleep 60
+              sudo /etc/packer/files/init.sh  --token  %s --server_url %s  --type server --bucket %s
+        toFieldPath: spec.forProvider.userData
+        transforms:
+        - type: string
+          string:
+             type: Convert
+             convert: ToBase64
+    - name: masterNodesAttachment
+      base:
+        apiVersion: autoscaling.aws.upbound.io/v1beta1
+        kind: Attachment
+        metadata:
+          labels:
+            role: masterNodesAttachment
+        spec:
+          forProvider:
+            autoscalingGroupNameSelector:
+              matchLabels:
+                role: masterNodesAS
+            elbSelector:
+              matchLabels:
+                role: masterNodesElb
+            region: ""
+      patches:
+        - type: PatchSet
+          patchSetName: common-parameters
+    - base:
+        apiVersion: autoscaling.aws.upbound.io/v1beta1
+        kind: AutoscalingGroup
+        metadata:
+          labels:
+            role: workerNodesAS
+        spec:
+          forProvider:
+            vpcZoneIdentifier: []
+            launchTemplate:
+            - idSelector:
+                matchLabels:
+                  role: workerNodesLT
+            maxSize: 5 
+            minSize: 0
+            region: ""
+      name: workerNodesAS
+      patches:
+        - type: PatchSet
+          patchSetName: common-parameters
+        - fromFieldPath: spec.parameters.nodes.count
+          toFieldPath: spec.forProvider.maxSize
+        - fromFieldPath: spec.parameters.subnetIds
+          toFieldPath: spec.forProvider.vpcZoneIdentifier
+    - name: workerNodesLT
+      base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: LaunchTemplate
+        metadata:
+          labels:
+            role: workerNodesLT
+        spec:
+          forProvider:
+            region: ""
+            name: ""
+            imageId: ""
+            keyName: ""
+            vpcSecurityGroupIds: []
+            userData: ""
+            instanceType: ""
+            iamInstanceProfile:
+            - arnSelector:
+                matchControllerRef: true
+            blockDeviceMappings:
+            - deviceName: "/dev/sda1"
+              ebs:
+              - deleteOnTermination: "true"
+                encrypted: "true"
+                volumeSize: 50
+                volumeType: gp2
+                kmsKeyIdSelector:
+                  matchControllerRef: true
+            - deviceName: "/dev/sdb"
+              ebs:
+              - deleteOnTermination: "true"
+                encrypted: "true"
+                volumeSize: 50
+                volumeType: gp2
+                kmsKeyIdSelector:
+                  matchControllerRef: true
+      patches:
+      - fromFieldPath: spec.parameters.keyName
+        toFieldPath: spec.forProvider.keyName
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.nodes.size
+        toFieldPath: spec.forProvider.instanceType
+        transforms:
+          - type: map
+            map:
+              small: m5.large
+              medium: m5.2xlarge
+              large: m5.8xlarge
+      - fromFieldPath: spec.parameters.volumeSize
+        toFieldPath: spec.forProvider.blockDeviceMappings[1].ebs[0].volumeSize
+      - fromFieldPath: spec.parameters.imageId
+        toFieldPath: spec.forProvider.imageId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.securityGroupIds
+        toFieldPath: spec.forProvider.vpcSecurityGroupIds
+      - type: PatchSet
+        patchSetName: common-parameters
+      - type: CombineFromComposite
+        policy:
+          fromFieldPath: Required
+        combine:
+          variables:
+          - fromFieldPath: spec.parameters.token
+          - fromFieldPath: status.rke2.masterElbDnsName
+          strategy: string
+          string:
+            fmt: |
+              #!/bin/bash
+              sleep 300
+              sudo /etc/packer/files/init.sh  --token  %s --server_url %s  --type agent
+        toFieldPath: spec.forProvider.userData
+        transforms:
+        - type: string
+          string:
+             type: Convert
+             convert: ToBase64
+    - base:
+        apiVersion: ec2.aws.upbound.io/v1beta1
+        kind: Instance
+        metadata:
+          labels:
+            role: bastion
+        spec:
+          forProvider:
+            ami: ""
+            instanceType: ""
+            keyName: ""
+            region: ""
+            vpcSecurityGroupIds: []
+            tags: 
+              Name: "rke2-bastion"
+            subnetId: ""
+            iamInstanceProfile: ""
+            rootBlockDevice:
+            - volumeSize: 50
+              volumeType: gp2
+              encrypted: true
+              kmsKeyId: ""
+            ebsBlockDevice:
+            - deviceName: /dev/sdb
+              volumeSize: 50
+              volumeType: gp2
+              encrypted: true
+              kmsKeyId: ""
+              deleteOnTermination: true
+      name: bastionNode
+      patches:
+      - type: PatchSet
+        patchSetName: common-parameters
+      - fromFieldPath: spec.parameters.nodes.size
+        toFieldPath: spec.forProvider.instanceType
+        transforms:
+          - type: map
+            map:
+              small: m5.xlarge
+              medium: m5.xlarge
+              large: m5.xlarge
+      - fromFieldPath: spec.parameters.imageId
+        toFieldPath: spec.forProvider.ami
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.volumeSize
+        toFieldPath: spec.forProvider.ebsBlockDevice[0].volumeSize
+      - fromFieldPath: spec.parameters.subnetIds[0]
+        toFieldPath: spec.forProvider.subnetId
+      - fromFieldPath: spec.parameters.securityGroupIds
+        toFieldPath: spec.forProvider.vpcSecurityGroupIds
+      - fromFieldPath: spec.parameters.keyName
+        toFieldPath: spec.forProvider.keyName
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.rke2.kmsKeyId
+        toFieldPath: spec.forProvider.rootBlockDevice[0].kmsKeyId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.rke2.kmsKeyId
+        toFieldPath: spec.forProvider.ebdBlockDevice[0].kmsKeyId
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: status.rke2.nodeInstanceProfileId
+        toFieldPath: spec.forProvider.iamInstanceProfile
+        policy:
+          fromFieldPath: Required
+    - name: bucket
+      base:
+        apiVersion: s3.aws.upbound.io/v1beta1
+        kind: Bucket
+        spec:
+          forProvider:
+            region: ""
+            objectLockEnabled: false
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.id
+          toFieldPath: status.rke2.bucketName
+          policy:
+            fromFieldPath: Required
+        - type: PatchSet
+          patchSetName: common-parameters
+    - name: blockPublicAccess
+      base: 
+        apiVersion: s3.aws.upbound.io/v1beta1
+        kind: BucketPublicAccessBlock
+        spec:
+          forProvider:
+            blockPublicAcls: true
+            blockPublicPolicy: true
+            bucketSelector:
+              matchControllerRef: true
+            region: ""
+            restrictPublicBuckets: true
+      patches:
+        - type: PatchSet
+          patchSetName: common-parameters

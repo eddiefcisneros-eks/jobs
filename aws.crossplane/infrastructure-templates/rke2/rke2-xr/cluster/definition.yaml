@@ -1,0 +1,126 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - Prototype RKE2 Platform Automation over MITRE AWS xcloud environmant as a base infrastructure for
+# Big Bang deployment
+# CLASSIFICATION: Unclassified
+# Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2024
+###################################################################################################################
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: rke2clusters.rke2.platformone.io
+spec:
+  group: rke2.platformone.io
+  names:
+    kind: RKE2Cluster
+    plural: rke2clusters
+  claimNames:
+    kind: Rke2CiCluster
+    plural: rke2ciclusters
+  versions:
+  - name: v1beta1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        description: RKE2Cluster is the Schema for the composite resource that stands up an RKE2 cluster and associated resources
+        type: object
+        properties:
+          apiVersion: 
+            description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources"
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the desired state of the RKE2Cluster composite
+            type: object
+            properties:
+              parameters:
+                type: object
+                description: parameters defines the configuration of the RKE2Cluster composite
+                properties:
+                  nodes:
+                    type: object
+                    description: RKE2 nodegroup and launchtemplate configuration parameters.
+                    properties:
+                      count:
+                        type: integer
+                        description: Number of worker nodes to deploy 
+                      size:
+                        type: string
+                        description: Size of node. Accepts "small" to provision m5.large "medium" to provision m5.xlarge and "large" to provision m5.2xlarge ec2 instances
+                        enum:
+                        - small
+                        - medium
+                        - large
+                    required:
+                    - count
+                    - size
+                  imageId: 
+                    type: string
+                    description: AMI id
+                  kmsKeyId:
+                    type: string
+                    description: kms key id
+                  encrypted:
+                    type: string
+                    description: Enables ebs encryption
+                  serviceIpv4Cidr:
+                    type: string
+                    description: The IPv4 CIDR block to assign Kubernetes pod and service IP addresses from. If you don't specify a block, defaults to  172.20.0.0/16. We recommend that you specify a block that does not overlap with resources in other networks that are peered or connected to your VPC. 
+                  volumeSize:
+                    type: integer
+                    description: Size of data volume on worker nodes. Defaults to 60G
+                  keyName:
+                    type: string
+                    description: keypair to ssh into worker nodes 
+                  subnetIds:
+                    type: array
+                    description: subnet ids for the RKE2 cluster private endpoint
+                    items:
+                      type: string
+                  securityGroupIds:
+                    type: array
+                    description: security group ids to associate with the RKE2 cluster private endpoint
+                    items:
+                      type: string
+                  region:
+                    description: AWS Geographic location of this cluster
+                    type: string       
+                    enum:
+                    - us-east-1
+                    - us-west-1
+                  token:
+                    description: RKE2 token
+                    type: string       
+                required:
+                  - token
+                  - region
+                  - nodes
+                  - securityGroupIds
+                  - subnetIds
+                  - keyName
+            required:
+              - parameters
+          status:
+            description: Status represents the observed state of the RKE2 cluster after resources have been provisioned
+            properties:
+              rke2:
+                description: Freeform field containing status information for rke2
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            type: object

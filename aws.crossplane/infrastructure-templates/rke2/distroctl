@@ -1,0 +1,880 @@
+#!/usr/bin/env bash
+#set -ex 
+set -x
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - Prototype RKE2 Platform Automation over MITRE AWS xcloud environmant as a base infrastructure for
+# Big Bang deployment
+# CLASSIFICATION: Unclassified
+# Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2024
+###################################################################################################################
+
+CLUSTER_NAME=management
+
+# Deployment options
+export ECR_REGISTRY_VALUE=""
+export CROSSPLANE_COMPOSITE=composition/rke2:1.1
+export PROVIDER_KUBERNETES_VERSION=v0.9.0
+export PROVIDER_AWS_VERSION=v0.47.1
+export CROSSPLANE_VERSION=1.14.5-bb.0
+
+# Default values.
+CROSSPLANE_VALUES_FILE="crossplane-values.yaml"
+EKS_XR_DIR="rke2-xr/"
+OUTPUT_LOG="output.log"
+
+# Downloaded Software
+CRANK_VERSION="v1.14.5"
+PACKER_VER="1.9.4"
+PACKER_SHA="6cd5269c4245aa8c99e551d1b862460d63fe711c58bec618fade25f8492e80d9"
+KUBECTL_VERSION="v1.28.2"
+SHA_KUBECTL=fba6c062e754a120bc8105cde1344de200452fe014a8759e06e4eec7ed258a09
+KUBECTL_URL="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+KUSTOMIZE_VERSION="v5.3.0"
+KUSTOMIZE_URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+HELM_VERSION="v3.13.3"
+SHA_HELM=bbb6e7c6201458b235f335280f35493950dcd856825ddcfd1d3b40ae757d5c7d
+HELM_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+K8S_CFG=~/.kube/config
+KIND_VER=v0.20.0
+KIND_SHA=513a7213d6d3332dd9ef27c24dab35e5ef10a04fa27274fe1c14d8a246493ded
+
+
+################################################################################
+# echo2 helper functions for properly displaying messages on silent mode #######
+################################################################################
+echo2()
+{
+if [ "$SILENT_MODE" == "true" ]
+then
+        echo $1 | tee /dev/tty
+else
+        echo $1
+fi
+}
+
+################################################################################
+# Preflight check. Used to make sure that all the prerequisites are met ########
+################################################################################
+preflight_check()
+{
+    if [[ $PREFLIGHT_CHECKED == "true" ]]; then return 0; fi
+
+    echo2 "[DISTROCTL]: Checking for prerequisites..."
+
+    ## Check for AWS CLI
+    if ! command -v aws &> /dev/null
+    then
+        echo "[DISTROCTL]: AWS CLI could not be found, attempting to install AWS CLI..."
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install
+        if [[ ! $? = 0 ]]
+        then
+            echo2 "[DISTROCTL]: AWS CLI Failed to install. Exiting..."
+            exit 1
+        fi
+        rm awscliv2.zip
+    fi
+
+    ## Check for crank. Will install it if it is not found.
+    if [[ $(crank -v) != $CRANK_VERSION ]] || ! command -v crank &> /dev/null
+    then
+        echo [DISTROCTL]: crank could not be found, installing crank...
+        curl -LO https://releases.crossplane.io/stable/$CRANK_VERSION/bin/linux_amd64/crank
+        chmod a+x crank && sudo mv crank /usr/local/bin/crank
+    fi
+
+    if ! command -v crank &> /dev/null
+    then
+        echo2 "[DISTROCTL]: Crank installation failed. Exiting..."
+        exit 1 
+    fi
+
+    ## Check for Packer. Will install if it is not found.
+    if ! command -v packer &> /dev/null
+    then
+        echo [DISTROCTL]: packer could not be found, installing packer...
+        wget https://releases.hashicorp.com/packer/"$PACKER_VER"/packer_"$PACKER_VER"_linux_amd64.zip
+        if [[ ! $(sha256sum packer_"$PACKER_VER"_linux_amd64.zip) =~ $PACKER_SHA ]]
+        then
+            echo2 "[DISTROCTL]: Checksum mismatch for packer."
+            echo [DISTROCTL]: Expected: $PACKER_SHA
+            echo [DISTROCTL]: Actual: $(sha256sum packer_"$PACKER_VER"_linux_amd64.zip)
+            echo [DISTROCTL]: Exiting.
+            exit
+        fi
+        unzip packer_"$PACKER_VER"_linux_amd64.zip
+        rm packer_"$PACKER_VER"_linux_amd64.zip
+        sudo mv packer /usr/local/bin
+    fi
+
+    ## Check for yq, Install if not found.
+    if ! command -v yq &> /dev/null
+    then
+        sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+        sudo chmod a+x /usr/local/bin/yq
+    fi
+
+    ## Install kind
+    if ! command -v kind &> /dev/null
+    then
+        echo [DISTROCTL]: KinD could not be found. Installing KinD.
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/$KIND_VER/kind-linux-amd64
+        if [[ ! $(sha256sum kind) =~ $KIND_SHA ]]
+        then
+            echo2 "[DISTROCTL]: Checksum mismatch for kind."
+            echo [DISTROCTL]: Expected: $KIND_SHA
+            echo [DISTROCTL]: Actual: $(sha256sum kind)
+            echo [DISTROCTL]: Exiting.
+            exit
+        fi
+        chmod +x ./kind && \
+        sudo mv ./kind /usr/local/bin/kind
+    fi
+
+    ## Install kubectl
+    if ! command -v kubectl &> /dev/null
+    then
+        echo [DISTROCTL]: Installing Kubectl.
+        curl -LO ${KUBECTL_URL} && chmod a+x ./kubectl && sudo mv ./kubectl /usr/local/bin/. && kubectl version --client
+    fi
+
+    ## Kustomize
+    if ! command -v kustomize &> /dev/null
+    then
+        echo [DISTROCTL]: Installing Kustomize.
+        echo ${KUSTOMIZE_URL} && curl -LO ${KUSTOMIZE_URL} && tar xvf kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz && chmod a+x ./kustomize  && sudo mv ./kustomize  /usr/local/bin/kustomize && kustomize version && rm kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz
+    fi
+
+    ## Helm
+    if ! command -v helm &> /dev/null
+    then
+        echo [DISTROCTL]: Installing Helm.
+        echo ${HELM_URL} && curl -LO ${HELM_URL} && chmod a+x ./helm-${HELM_VERSION}-linux-amd64.tar.gz  && tar xvf helm-${HELM_VERSION}-linux-amd64.tar.gz && chmod a+x linux-amd64/helm && sudo mv ./linux-amd64/helm  /usr/local/bin/helm && helm version && rm -rf linux-amd64 && rm helm-${HELM_VERSION}-linux-amd64.tar.gz
+    fi
+
+    # Flux
+    if ! command -v flux &> /dev/null
+    then
+        echo [DISTROCTL]: Installing Flux.
+        curl -LO https://github.com/fluxcd/flux2/releases/download/v0.38.2/flux_0.38.2_linux_amd64.tar.gz && tar xvf flux_0.38.2_linux_amd64.tar.gz && chmod a+x flux && sudo mv flux /usr/local/bin/flux && rm flux_0.38.2_linux_amd64.tar.gz
+    fi
+    
+    # yq
+    if ! command -v yq &> /dev/null
+    then
+        echo [DISTROCTL]: Installing yq.
+        curl -LO https://github.com/mikefarah/yq/releases/download/v4.30.6/yq_linux_amd64 && chmod a+x yq_linux_amd64 && sudo mv yq_linux_amd64 /usr/local/bin/yq
+    fi
+
+    ## Check for docker
+    if ! command -v docker &> /dev/null
+    then
+        echo2 "[DISTROCTL]: Docker not found. Would you like to attempt to install docker? [y]/n"
+        read answer
+        if [ "$answer" = "${answer#[Nn]}" ]
+        then
+            if [ "$answer" = "${answer#[Yy]}" ]; then echo [DISTROCTL]: Defaulting to yes.; fi
+            if [[ $(uname -r) =~ amzn ]]
+            then
+                sudo yum -y install docker
+                if [[ ! $? = 0 ]]; then echo2 "[DISTROCTL]: Docker failed to install. Exiting..." && exit 1; fi
+            else
+                curl -fsSL https://get.docker.com -o get-docker.sh
+                sh get-docker.sh
+                if [[ ! $? = 0 ]]; then echo2 "[DISTROCTL]: Docker failed to install. Exiting..." && rm get-docker.sh && exit 1; fi
+                rm get-docker.sh
+            fi
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo groupadd docker
+            sudo usermod -aG docker $USER
+            echo2 "[DISTROCTL]: Docker installed. You may need to restart or relogin for docker to become available."
+            DOCKER_INSTALLED="1"
+        else
+            echo2 "[DISTROCTL]: Docker will not be installed. Exiting..."
+            exit 1
+        fi
+    fi
+
+    ## Check if docker is running.
+    docker ps &> /dev/null
+    if [[ ! $? = 0 ]]
+    then
+        echo2 "[DISTROCTL]: Docker does not appear to be running, make sure that Docker is running and installed."
+        if [[ "$DOCKER_INSTALLED" = "1" ]]; then echo2 "[DISTROCTL]: If you just installed docker, you may need to reboot or relog into this machine before Docker is available."; fi
+        exit
+    fi
+
+    echo2 "[DISTROCTL]: Pre-flight check passed."
+    PREFLIGHT_CHECKED="true"
+}
+
+################################################################################
+# Checks for credentials, AWS ##################################################
+################################################################################
+aws_cred_check() {
+
+    if [[ $AWS_CREDS_CHECKED == "true" ]]; then return 0; fi
+
+    ## Check for AWS Creds
+    if [[ -z "$AWS_ACCESS_KEY_ID" ]];
+    then
+       echo2 "[DISTROCTL]: AWS_ACCESS_KEY_ID is not defined. Please define it by using the command \"export AWS_ACCESS_KEY_ID=...\" or enter it now:"
+       read -s AWS_ACCESS_KEY_ID
+       export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+    fi
+    if [[ -z "$AWS_SECRET_ACCESS_KEY" ]];
+    then
+       echo2 "[DISTROCTL]: AWS_SECRET_ACCESS_KEY is not defined. Please define it by using the command \"export AWS_SECRET_ACCESS_KEY=...\" or enter it now:"
+       read -s AWS_SECRET_ACCESS_KEY
+       export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+    fi
+    if [[ -z "$AWS_DEFAULT_REGION" ]];
+    then
+       echo2 "[DISTROCTL]: AWS_DEFAULT_REGION is not defined. Please define it by using the command \"export AWS_DEFAULT_REGION=...\" or enter it now:"
+       read AWS_DEFAULT_REGION
+       export AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION
+    fi
+
+    AWS_USER_ID=$(aws sts get-caller-identity --query "Account" --output text)
+
+    # Login in to aws ecr
+    echo [DISTROCTL]: Attempting to set docker credentials for ECR.
+    aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin $AWS_USER_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+    if [[ ! $? = 0 ]]
+    then
+        echo2 "[DISTROCTL]: Docker login for AWS failed, make sure the AWS key, secret key, and region are correct and try again."
+        exit 1
+    fi
+
+    ECR_REGISTRY_VALUE="$AWS_USER_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+
+    AWS_CREDS_CHECKED="true"
+}
+
+################################################################################
+# Checks for credentials, Iron Bank ############################################
+################################################################################
+ib_cred_check() {
+
+    if [[ $IB_CREDS_CHECKED == "true" ]]; then return 0; fi
+
+    # Check for Iron Bank creds
+    if [[ -z "$REGISTRY1_USERNAME" ]];
+    then
+       echo2 "[DISTROCTL]: registry1.dso.mil username is not defined. Please enter it now:"
+       read REGISTRY1_USERNAME
+    fi
+    if [[ -z "$REGISTRY1_PASSWORD" ]];
+    then
+       echo2 "[DISTROCTL]: registry1.dso.mil password is not defined. Please enter it now:"
+       read -s REGISTRY1_PASSWORD
+    fi
+    docker login registry1.dso.mil --username $REGISTRY1_USERNAME --password $REGISTRY1_PASSWORD
+    if [[ ! $? = 0 ]]
+    then
+        echo2 "[DISTROCTL]: Docker login for registry1.dso.mil failed, make sure the given username and password are correct."
+        exit 1
+    fi
+    IB_CREDS_CHECKED="true"
+}
+################################################################################
+# Build the AMI ################################################################
+################################################################################
+build_ami() {
+    echo2 "[DISTROCTL]: Creating AMI."
+    echo2 "[DISTROCTL]: This may take about 15 minutes..."
+    sleep 3
+
+    ## Check if AMI builder files are present.
+    if [ ! -d rke2-ami/ ]
+    then
+       echo2 "[DISTROCTL]: Could not find AMI builder files. Exiting..."
+       exit 1
+    fi
+
+    sed -i 's/\"aws_region\":\".*\",/\"aws_region\":\"'$AWS_DEFAULT_REGION'\",/' rke2-ami/packer.json
+
+    cd rke2-ami/
+    if [ "$SILENT_MODE" == "true" ]
+    then
+        AMI_ID=$(packer build packer.json)
+    else
+        AMI_ID=$(packer build packer.json | tee /dev/tty)
+    fi
+    AMI_ID=$(echo $AMI_ID | grep -oP "(?<=AMI: )ami-[0-9a-f]+" | tail -1)
+	echo "$AMI_ID" > ami_build.log
+    cd $OLDPWD
+
+    if ! aws ec2 describe-images --image-ids="$AMI_ID" --query "Images[*].State" --output text &> /dev/null
+    then
+        echo2 "[DISTROCTL]: The AMI did not appear to build correctly. Exiting..."
+        exit 1
+    fi
+}
+
+################################################################################
+# Uploads crossplane template onto ECR #########################################
+################################################################################
+upload_crossplane_template() {
+    aws_cred_check
+    ## Check if Crossplane template files are present.
+    if [ ! -d $EKS_XR_DIR ]
+    then
+        echo2 "[DISTROCTL]: Could not find Crossplane template files. Exiting..."
+        exit 1
+    else
+        find $EKS_XR_DIR -name '*.sh' -exec chmod a+x {} +
+    fi
+
+    echo2 "[DISTROCTL]: Publishing Crossplane template to ECR: $AWS_USER_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$CROSSPLANE_COMPOSITE"
+    (
+    cd $EKS_XR_DIR
+    rm *.xpkg &> /dev/null
+    crank xpkg build 
+
+    crank xpkg push "$AWS_USER_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$CROSSPLANE_COMPOSITE"
+    )
+    if [[ ! $? = 0 ]]
+    then
+        echo2 "[DISTROCTL]: Crossplane Template failed to push to $AWS_USER_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$CROSSPLANE_COMPOSITE"
+        exit 1
+    fi
+}
+
+################################################################################
+# Check to see if values in crossplane values file are valid ###################
+################################################################################
+validate_crossplane_values_file() { 
+
+    aws_cred_check
+
+    # Validate deplyoment name
+    UXP_NAMES=$(yq '.infrastructure.RKE2Cluster[].name' $CROSSPLANE_VALUES_FILE)
+    if [[ -z $UXP_NAMES ]]
+    then
+        echo [DISTROCTL]: No deployment names found. Value is missing or file is improperly formatted.
+        ERROR_FOUND="true"
+    fi
+    for UXP_NAME in $UXP_NAMES
+    do
+        if [[ ! $UXP_NAME =~ ^[0-9A-Za-z][_0-9A-Za-z\-]{0,90}$ ]]
+        then
+            echo [DISTROCTL]: Uxp name $UXP_NAME is invalid.
+            ERROR_FOUND="true"
+        fi
+    done
+
+    # Validate AMI image
+    IMAGES=$(yq '.infrastructure | (.RKE2Cluster[].imageId)' $CROSSPLANE_VALUES_FILE)
+    for IMAGE in $IMAGES
+    do 
+        if ! aws ec2 describe-images --image-ids="$IMAGE" --query "Images[*].State" --output text &> /dev/null
+        then
+            echo [DISTROCTL]: AMI $IMAGE not available.
+            ERROR_FOUND="true"
+        fi
+    done
+    
+    # Validate ssh key
+    KEYS=$(yq '.infrastructure | (.RKE2Cluster[].keyName)' $CROSSPLANE_VALUES_FILE)
+    for KEY in $KEYS
+    do
+        if ! aws ec2 describe-key-pairs --key-names "$KEY" &> /dev/null
+        then
+            echo [DISTROCTL]: SSH key $KEY not available.
+            ERROR_FOUND="true"
+        fi
+    done
+
+    if [[ $ERROR_FOUND == "true" ]]
+    then
+        echo2 "[DISTROCTL]: Invalid crossplane values file found exiting."
+        exit
+    fi
+}
+
+################################################################################
+# Create new crossplane values files. Also build AMI uploads template to ecr ###
+################################################################################
+generate_crossplane_values_file() {
+    aws_cred_check
+
+    echo
+    echo2 "[DISTROCTL]: Would you like to provide a ssh key for this deployment? If one is not provided, one will be generated. [y]/n: "
+    read answer
+    if [ "$answer" = "${answer#[Nn]}" ]
+    then
+        echo2 "[DISTROCTL]: Please provide a ssh key to use for this EKS deployment: "
+        read KEY_NAME
+        while ! aws ec2 describe-key-pairs --key-names "$KEY_NAME" &> /dev/null
+        do
+            echo2 "[DISTROCTL]: The given SSH key ($KEY_NAME) does not appear to exist."
+            echo
+            echo2 "[DISTROCTL]: Please provide a SSH key to use for this EKS deployment: "
+            read KEY_NAME
+        done
+    else
+        RAND=$RANDOM
+        KEY_NAME=demo-$RAND
+        echo "[DISTROCTL]: Generating ssh key ($KEY_NAME) for deployment."
+        aws ec2 create-key-pair --key-name $KEY_NAME --query 'KeyMaterial' --output text > $KEY_NAME.pem
+    fi
+
+    echo2 "[DISTROCTL]: Would you like to provide a Service CIDR block deployment? If no it will default to 10.45.0.0/16  y/[n]: "
+    read answer
+    if [ "$answer" = "${answer#[Yy]}" ]
+    then
+        if [ "$answer" = "${answer#[Nn]}" ]; then echo2 "[DISTROCTL]: Defaulting to no, using default CIDR."; fi
+        VPCCIDR=10.45
+    else
+        echo2 "[DISTROCTL]: Please provide a value between 1 and 99 for the second number in the CIDR block (i.e. 10.x.0.0)."
+        read answer
+        while [[ ! $answer =~ ^[1-9][0-9]?$ ]]
+        do
+            echo2 "[DISTROCTL]: Please choose a number between 1 and 99."
+            read answer
+        done
+        VPCCIDR=10.$answer
+    fi
+
+    echo2 "[DISTROCTL]: Please provide subnet id of Generic MITRE-Only Public Subnet in the first availability zone in your xcloud account"
+    read SUBNET_1
+    while ! aws ec2 describe-subnets --subnet-ids  "$SUBNET_1" &> /dev/null
+    do
+       echo2 "[DISTROCTL]: The given subnet key ($SUBNET_1) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide subnet id of Generic MITRE-Only Public Subnet in the first availability Zone in your xcloud account"
+       read SUBNET_1
+    done
+
+    echo2 "[DISTROCTL]: Please provide subnet id of Generic MITRE-Only Public Subnet in the second availability zone in your xcloud account"
+    read SUBNET_2
+    while ! aws ec2 describe-subnets --subnet-ids  "$SUBNET_2" &> /dev/null
+    do
+       echo2 "[DISTROCTL]: The given subnet key ($SUBNET_2) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide subnet id of Generic MITRE-Only Public Subnet in the second availability Zone in your xcloud account"
+       read SUBNET_2
+    done
+    echo2 "[DISTROCTL]: Please provide subnet id of Generic MITRE-Only Public Subnet in the third availability zone in your xcloud account"
+    read SUBNET_3
+    while ! aws ec2 describe-subnets --subnet-ids  "$SUBNET_3" &> /dev/null
+    do
+	    echo2 "[DISTROCTL]: The given subnet key ($SUBNET_3) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide subnet id of Generic MITRE-Only Public Subnet in the third availability Zone in your xcloud account"
+       read SUBNET_3
+    done
+    echo2 "[DISTROCTL]: Please provide the security group id of Generic MITRE Baseline SG in your xcloud account"
+    read SG_1
+    while ! aws ec2 describe-security-groups --group-ids  "$SG_1" &> /dev/null
+    do
+       echo2 "[DISTROCTL]: The given security group  ($SG_1) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide the security group id of Generic MITRE Baseline SG in your xcloud account"
+       read SG_1
+    done
+    echo2 "[DISTROCTL]: Please provide the security group id of Generic MITRE All SG in your xcloud account"
+    read SG_2
+    while ! aws ec2 describe-security-groups --group-ids  "$SG_2" &> /dev/null
+    do
+       echo2 "[DISTROCTL]: The given security group  ($SG_2) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide the security group id of Generic MITRE All SG in your xcloud account"
+       read SG_2
+    done
+    echo2 "[DISTROCTL]: Please provide the security group id of Generic MITRE Web SG in your xcloud account"
+    read SG_3
+    while ! aws ec2 describe-security-groups --group-ids  "$SG_3" &> /dev/null
+    do
+       echo2 "[DISTROCTL]: The given security group  ($SG_3) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide the security group id of Generic MITRE Web SG in your xcloud account"
+       read SG_3
+    done
+
+    echo2 "[DISTROCTL]: Please provide Intra SG"
+    read SG_4
+    while ! aws ec2 describe-security-groups --group-ids  "$SG_4" &> /dev/null
+    do
+       echo2 "[DISTROCTL]: The given security group  ($SG_4) does not appear to exist."
+       echo
+       echo2 "[DISTROCTL]: Please provide IntraSG"
+       read SG_4
+    done
+    # Create AMI
+    build_ami
+    upload_crossplane_template
+
+    cat << EOF > $CROSSPLANE_VALUES_FILE
+infrastructure:
+  RKE2Cluster: 
+  - name: demo
+    keyName: "$KEY_NAME"
+    imageId: "$AMI_ID"
+    volumeSize: 60
+    nodes:
+      count: 1
+      size: small
+    serviceIpv4Cidr: 10.45.0.0/16
+    subnetIds:
+    - ${SUBNET_1}
+    - ${SUBNET_2}
+    - ${SUBNET_3}
+    securityGroupIds:
+    - ${SG_1}
+    - ${SG_2}
+    - ${SG_3}
+    - ${SG_4}
+    region: ${AWS_DEFAULT_REGION}
+    token: 0ae2f38f6f034610969b65211afc38a5f4c1b07785dc5d7103a760b9ac150c0e483262dc7e0de518
+EOF
+}
+
+################################################################################
+# Check if crossplane values file exists/is provided ###########################
+################################################################################
+configure_check() {
+
+    # If already checked then proceed
+    if [[ $CONFIGURE_CHECKED == "true" ]]; then return 0; fi
+
+    # If no file is provided check for default. If no file is found create a new file.
+    if [[ ! $CROSSPLANE_FILE_PROVIDED == "true" ]]
+    then
+        if [ -f $CROSSPLANE_VALUES_FILE ]
+        then
+            echo2 "[DISTROCTL]: Crossplane values file found. Would you like to use $CROSSPLANE_VALUES_FILE as the Crossplane values file? [y]/n"
+            read answer
+            if [ "$answer" = "${answer#[Nn]}" ]
+            then
+                if [ "$answer" = "${answer#[Yy]}" ]; then echo [DISTROCTL]: Defaulting to yes.; fi
+            else
+                echo2 "[DISTROCTL]: No crossplane values file found. Please provide a crossplane values file using the \'-c\' argument or generate a default file using \"./distroctl generate_crossplane_values_file \""
+                echo2 "[DISTROCTL]: Would you like to generate a Crossplane values file now? [y]/n "
+                read answer
+                if [ "$answer" = "${answer#[Nn]}" ]
+                then
+                    generate_crossplane_values_file
+                else
+                    exit
+                fi
+            fi
+        else
+            echo2 "[DISTROCTL]: No crossplane values file found. Please provide a crossplane values file using the \'-c\' argument or generate a default file using \"./distroctl generate_crossplane_values_file \""
+            echo2 "[DISTROCTL]: Would you like to generate a Crossplane values file now? [y]/n "
+            read answer
+            if [ "$answer" = "${answer#[Nn]}" ]
+            then
+                generate_crossplane_values_file
+            else
+                exit
+            fi
+        fi
+    fi
+
+    validate_crossplane_values_file
+    CONFIGURE_CHECKED="true"
+}
+
+################################################################################
+## Install bootstrap kind Cluster ##############################################
+################################################################################
+install_bootstrapCluster() {
+# Call preflight checks
+  preflight_check
+  echo2 "[DISTROCTL]: Creating KinD Cluster"
+  kind create cluster --name ${CLUSTER_NAME}  --wait=40s
+  kubectl wait --for=condition=available --timeout "300s" -n "kube-system" "deployment/coredns"
+}
+
+################################################################################
+# Install crossplane bootstrap onto cluster ####################################
+################################################################################
+install_crossplane_bootstrap() {
+ib_cred_check
+echo2 "[DISTROCTL]: Installing crossplane bootstrap"
+cat <<EOF > /tmp/credentials
+[default]
+aws_access_key_id =  $AWS_ACCESS_KEY_ID
+aws_secret_access_key = $AWS_SECRET_ACCESS_KEY
+EOF
+  kubectl get namespace crossplane-system &> /dev/null
+  if [[ ! $? = 0 ]]
+  then
+    kubectl create ns crossplane-system
+  fi
+  docker login registry1.dso.mil --username $REGISTRY1_USERNAME --password $REGISTRY1_PASSWORD
+  
+  kubectl get secret private-registry -n crossplane-system &> /dev/null
+  if [[ ! $? = 0 ]]
+  then
+    kubectl create secret docker-registry private-registry --docker-server=registry1.dso.mil  --docker-username=$REGISTRY1_USERNAME --docker-password=$REGISTRY1_PASSWORD -n crossplane-system
+  fi
+  
+  kubectl get secret aws-creds -n crossplane-system &> /dev/null
+  if [[ ! $? = 0 ]]
+  then
+    kubectl create secret generic aws-creds --from-file /tmp/credentials -n crossplane-system
+  fi
+  rm /tmp/credentials
+  sed  s,ECR_REGISTRY_VALUE,$ECR_REGISTRY_VALUE,g bootstrap-manifests/ecr.yaml | sed s,AWS_REGION_VALUE,$AWS_DEFAULT_REGION,g | kubectl apply -f -
+}
+
+################################################################################
+## Install crossplane onto cluster #############################################
+###############################################################################
+install_crossplane() {
+  echo2 "[DISTROCTL]: Installing crossplane."
+  # If given a values file, use that. Otherwise use no file.
+  if [[ ! -z $1 ]]
+  then
+    VALUES_FILE="-f $1"
+  else
+    VALUES_FILE=""
+  fi
+  helm pull oci://registry1.dso.mil/bigbang/crossplane --version $CROSSPLANE_VERSION --destination /tmp
+  helm upgrade --install crossplane /tmp/crossplane-$CROSSPLANE_VERSION.tgz --set provider.packages[0]=xpkg.upbound.io/upbound/provider-aws-ec2:$PROVIDER_AWS_VERSION --set provider.packages[1]=xpkg.upbound.io/upbound/provider-aws-elb:$PROVIDER_AWS_VERSION --set provider.packages[2]=xpkg.upbound.io/upbound/provider-family-aws:$PROVIDER_AWS_VERSION --set provider.packages[3]=xpkg.upbound.io/crossplane-contrib/provider-kubernetes:$PROVIDER_KUBERNETES_VERSION --set provider.packages[4]=xpkg.upbound.io/upbound/provider-aws-kms:$PROVIDER_AWS_VERSION --set provider.packages[5]=xpkg.upbound.io/upbound/provider-aws-cloudwatchlogs:$PROVIDER_AWS_VERSION --set provider.packages[6]=xpkg.upbound.io/upbound/provider-aws-autoscaling:$PROVIDER_AWS_VERSION  --set provider.packages[7]=xpkg.upbound.io/upbound/provider-aws-s3:$PROVIDER_AWS_VERSION --set imagePullSecrets[0]=private-registry --set imagePullSecrets[1]=ecr-credentials --wait --timeout 300s $VALUES_FILE -n crossplane-system
+  kubectl wait --for=condition=available --timeout "300s" -n "crossplane-system" "deployment/crossplane"
+  rm /tmp/crossplane-$CROSSPLANE_VERSION.tgz
+}
+
+################################################################################
+## Install crossplane providers ################################################
+################################################################################
+install_providers() {
+  echo2 "[DISTROCTL]: Installing providers"
+  sed  s,AWS_DEFAULT_REGION_VALUE,$AWS_DEFAULT_REGION,g bootstrap-manifests/aws-DeploymentRuntimeConfig.yaml | kubectl apply -f -
+  crank xpkg install provider xpkg.upbound.io/upbound/provider-aws-iam:$PROVIDER_AWS_VERSION --runtime-config=aws-deployment-config
+  providers=$(kubectl get provider.pkg.crossplane.io -o name)
+  for provider in $providers; do  while ! [ $(kubectl get  $provider -o 'jsonpath={..status.conditions[?(@.type=="Healthy")].status}') == "True" ]; do echo "Waiting for providers to be ready."; sleep 30; done; done
+}
+
+################################################################################
+## Install crossplane configurations ###########################################
+################################################################################
+install_configurations() {
+  echo2 "[DISTROCTL]: Installing configurations"
+  # If given a crossplane config, use that. Otherwise use default.
+  if [[ ! -z $1 ]]
+  then
+    CROSSPLANE_CONFIG=$1
+  else
+    CROSSPLANE_CONFIG=$ECR_REGISTRY_VALUE/$CROSSPLANE_COMPOSITE
+  fi
+  
+  crank xpkg install configuration $CROSSPLANE_CONFIG rke2-composite --package-pull-secrets ecr-credentials
+  configurations=$(kubectl get configurations.pkg.crossplane.io -o name)
+  for configuration in $configurations; do  while ! [ $(kubectl get  $configuration -o 'jsonpath={..status.conditions[?(@.type=="Healthy")].status}') == "True" ]; do echo "Waiting for configuration to be ready."; sleep 30; done; done
+}
+################################################################################
+## Install crossplane infrastructure ###########################################
+################################################################################
+install_infrastructure() {
+  echo2 "[DISTROCTL]: Deploying infrastructure."
+  kubectl apply -f bootstrap-manifests/aws-providerconfig.yaml  
+  helm upgrade --install infrastructure bootstrap-manifests/infrastructure -f $CROSSPLANE_VALUES_FILE  --wait --timeout 300s --create-namespace -n crossplane-system
+}
+
+################################################################################
+# Uninstall crossplane infrastructure ##########################################
+################################################################################
+uninstall() {
+  helm delete infrastructure -n crossplane-system
+# wait till kubectl managed has no output
+}
+
+################################################################################
+## Runs the cluster deployment #################################################
+################################################################################
+deploy_cluster()
+{
+    install_bootstrapCluster
+}
+
+################################################################################
+# Deploy crossplane onto bootstrap cluster #####################################
+################################################################################
+deploy_crossplane(){
+
+# Call preflight checks
+    preflight_check
+    aws_cred_check
+    ib_cred_check   
+
+    for arg in "$@"; do
+      case "$arg" in
+        'bootstrap')      BOOTSTRAP="true" ;;
+        'crossplane')     CROSSPLANE="true" ;;
+        'providers')      PROVIDERS="true"  ;;
+        'configurations') CONFIGS="true" ;;
+        '--values')       OPTION_VALUES="true"   ;;
+        '--template')     OPTION_TEMPLATE="true" ;;
+        $VALUES_FILE)     ;; # Ignore the values file as argument
+        $TEMPLATE_LOC)    ;; # Ignore the template as argument
+        *)                UNKNOWN_OPT_GIVEN="true"  ;;
+
+      esac
+    done
+
+    if [[ ! $BOOTSTRAP == "true"  &&  ! $CROSSPLANE == "true" && ! $PROVIDERS == "true" && ! $CONFIGS == "true" ]]
+    then #if none are true and no junk input given, default to doing all of them.
+	    if [[ ! $UNKNOWN_OPT_GIVEN == "true" ]]
+		then
+            BOOTSTRAP="true"
+            CROSSPLANE="true"
+            PROVIDERS="true"
+            CONFIGS="true"
+		else
+		    echo2 "[DISTROCTL]: Unknown option given for deploy_crossplane. Please give a valid option."
+		fi
+    fi
+    
+    if [[ $BOOTSTRAP == "true" ]]; then install_crossplane_bootstrap; fi
+    if [[ $CROSSPLANE == "true" ]]; then install_crossplane $VALUES_FILE; fi
+    if [[ $PROVIDERS == "true" ]]; then install_providers; fi
+    if [[ $CONFIGS == "true" ]]; then install_configurations $TEMPLATE_LOC; fi
+}
+
+################################################################################
+# Deploy infrastructure through crossplane #####################################
+################################################################################
+deploy_infrastructure(){
+# Call preflight checks
+    preflight_check
+    aws_cred_check
+# Configure / Validate UXP and EKSCluster values
+    configure_check
+    install_infrastructure
+    echo2 "[DISTROCTL]: Infrastructure deployed. Use \"kubectl get managed\" to see managed resources."
+}
+
+################################################################################
+# Full deployment from scratch #################################################
+################################################################################
+deploy() {
+    # Call all checks checks
+    preflight_check
+    aws_cred_check
+    ib_cred_check
+    configure_check
+    # Check for pre-existing cluster and skip cluster creation if it exists.
+    # Assumes that default kubeconfig is set for the bootstrap cluster.
+    kubectl get all &> /dev/null
+    if [[ ! $? = 0 ]]
+    then
+        deploy_cluster
+    fi
+
+    # Check for crossplane config and skip crossplane install if it exists.
+    # Assumes that default kubeconfig is set for the bootstrap cluster.
+    kubectl get configurations.pkg.crossplane.io -o name &> /dev/null
+    if [[ ! $? = 0 ]]
+    then
+        deploy_crossplane
+    fi
+
+    deploy_infrastructure
+}
+################################################################################
+# Deletes deployment infrastructure ############################################
+################################################################################
+delete_infrastructure(){ 
+# Call preflight checks
+   preflight_check
+   aws_cred_check
+   uninstall_infrastructure
+}
+
+################################################################################
+# Help function, prints out command details ####################################
+################################################################################
+help() {
+    echo
+    echo "distroctl: used to deploy computing infrastructure via crossplane."
+    echo "See README.md for more details on commands"
+    echo "Main Command:"
+    echo "  deploy:                          Full deployment from scratch"
+    echo
+    echo "Helper Commands:"
+    echo "  preflight_check:                 Checks for and installs prerequisite software"
+    echo "  aws_cred_check:                  Checks for AWS credentials"
+    echo "  ib_cred_check:                   Checks for Iron Bank credentials"
+    echo "  configure_check:                 Check for valid crossplane values file"
+    echo "  upload_crossplane_template:      Upload crossplane template onto ECR"
+    echo "  build_ami:                       Build and upload AMI onto AWS"
+    echo "  deploy_cluster:                  Deploys the KinD bootstrasp cluster"
+    echo "  deploy_crossplane:               Deploys Crossplane onto the bootstrap cluster."
+    echo "  deploy_infrastructure:           Deploys infrastructure onto AWS through crossplane"
+    echo "  generate_crossplane_values_file: Generates a crossplane values file"
+    echo "  validate_crossplane_values_file: Validates a given crossplane values file"
+    echo
+    echo "Flags:"
+    echo "  -c          Used to provide a crossplane values file for infrastructure deployment."
+    echo "  -s          Silent mode. If active, most messages will not be displayed to console."
+    echo "  --values    Used to provide a values file during crossplane installation."
+    echo "  --template  Used to provide a crossplane template location when configurating crossplane."
+    echo
+}
+
+
+# Handle options
+COMMAND=$1
+if [ -z $COMMAND ]
+then
+    echo "[DISTROCTL]: No command given. Use \"help\" to see commands/"
+    exit
+fi
+
+shift 1
+for arg in "$@"; do
+    if [[ $OPTION_VALUES == "true" ]]
+    then
+            VALUES_FILE=$arg
+            OPTION_VALUES=""
+            continue
+    fi
+    if [[ $OPTION_TEMPLATE == "true" ]]
+    then
+            TEMPLATE_LOC=$arg
+            OPTION_TEMPLATE=""
+            continue
+    fi
+    if [[ $OPTION_CROSSPLANE_VALUES == "true" ]]
+    then
+            CROSSPLANE_VALUES_FILE=$arg
+            CROSSPLANE_FILE_PROVIDED="true"
+            OPTION_CROSSPLANE_VALUES=""
+            continue
+    fi
+  case "$arg" in
+    '--values')       OPTION_VALUES="true"   ;;
+    '--template')     OPTION_TEMPLATE="true" ;;
+    '-c')             OPTION_CROSSPLANE_VALUES="true" ;;
+    '-s')             SILENT_MODE="true" ;;
+    *)  ;; #do nothing
+  esac
+done
+
+if [ "$SILENT_MODE" == "true" ]
+then
+    echo [DISTROCTL]: Silent mode active, logs will be written to $OUTPUT_LOG.
+fi
+
+# Handle commands
+case $COMMAND in
+    (preflight_check|aws_cred_check|ib_cred_check|configure_check|upload_crossplane_template|build_ami|deploy_cluster|deploy_crossplane|deploy_infrastructure|deploy|generate_crossplane_values_file|validate_crossplane_values_file|install_crossplane_bootstrap|install_crossplane|install_providers|install_configurations|help) if [ "$SILENT_MODE" == "true" ]; then $COMMAND $@ >> $OUTPUT_LOG 2>&1; else $COMMAND $@ 2>&1 | tee -a $OUTPUT_LOG; fi ;;
+    (*) echo [DISTROCTL]: $COMMAND command not found. Use \"help\" to see commands ;;
+esac

@@ -1,0 +1,220 @@
+---
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: definition.yaml
+# CLASSIFICATION: Unclassified
+# AUTHORS:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: yaml manifest part of Crossplane composite template to deploy EKS
+###################################################################################################################
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: eksstacks.eks.platformone.io
+spec:
+  group: eks.platformone.io
+  names:
+    kind: EKSStack
+    plural: eksstacks
+  claimNames:
+    kind: CiStack
+    plural: cistacks
+  connectionSecretKeys:
+    - cluster-ca
+    - apiserver-endpoint
+    - value
+  versions:
+  - name: v1beta1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        description: EKSCluster is the Schema for the composite resource that stands up an EKS cluster and associated resources
+        type: object
+        properties:
+          apiVersion:
+            description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources"
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              parameters:
+                type: object
+                properties:
+                  bastion:
+                    type: object
+                    description: EKS bastion configuration parameters
+                    properties:
+                      imageId: 
+                        type: string
+                        description: AMI id to be used to provision  the bastion instance
+                      instanceType: 
+                        type: string
+                        description: Type of EC2 instance to be provisioned as bastion instance
+                    required:
+                    - imageId
+                    - instanceType
+                  nodes:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      imageId:
+                        type: string
+                      count:
+                        type: integer
+                        description: Desired node count, from 1 to 100.
+                      size:
+                        type: string
+                        description: Size of node.
+                        enum:
+                        - small
+                        - medium
+                        - large
+                    required:
+                    - count
+                    - size
+                    - imageId
+                  volumeSize:
+                    type: integer
+                    description: Size of data volume on bastion and worker nodes
+                  keyName:
+                    type: string
+                    description: keypair to ssh into bastion and worker nodes
+                  thumbprintList:
+                    type: array
+                    description: the thumbprint for the IAM identity provider. Defaults to us-gov-east-1 thumbprint
+                    items:
+                      type: string
+                  csiAddonVersion:
+                    type: string
+                    description: AWS EBS CSI addon version. Defaults to  v1.19.0-eksbuild.2
+                  serviceIpv4Cidr:
+                    type: string
+                    description: "The IPv4 CIDR block to assign Kubernetes pod and service IP addresses from. If you don't specify a block, Kubernetes assigns addresses from either the 10.100.0.0/16 or 172.20.0.0/16 CIDR blocks. We recommend that you specify a block that does not overlap with resources in other networks that are peered or connected to your VPC. You can only specify a custom CIDR block when you create a cluster, changing this value will force a new cluster to be created."
+                  region:
+                    description: Geographic location of this VPC
+                    type: string       
+                  mapUsers:
+                    type: string
+                    description: User role mapping to privileges on the cluster
+                  version:
+                    description: Kubernetes version
+                    type: string
+                  vpcCidr:
+                    description: The CIDR block to asociate with the EKS cluster VPC
+                    type: string
+                  publicsubnet01:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      cidrBlock: 
+                        description: The CIDR block to asociate with the subnet in AZ 
+                        type: string
+                      az:
+                        description: Availability Zone for this subnet
+                        type: string
+                    required:
+                    - cidrBlock
+                    - az 
+                  publicsubnet02:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      cidrBlock: 
+                        description: The CIDR block to asociate with the subnet in AZ 
+                        type: string
+                      az:
+                        description: Availability Zone for this subnet
+                        type: string
+                    required:
+                    - cidrBlock
+                    - az 
+                  publicsubnet03:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      cidrBlock: 
+                        description: The CIDR block to asociate with the subnet in AZ 
+                        type: string
+                      az:
+                        description: Availability Zone for this subnet
+                        type: string
+                    required:
+                    - cidrBlock
+                    - az 
+                  privatesubnet01:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      cidrBlock: 
+                        description: The CIDR block to asociate with the subnet in AZ 
+                        type: string
+                      az:
+                        description: Availability Zone for this subnet
+                        type: string
+                    required:
+                    - cidrBlock
+                    - az 
+                  privatesubnet02:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      cidrBlock: 
+                        description: The CIDR block to asociate with the subnet in AZ 
+                        type: string
+                      az:
+                        description: Availability Zone for this subnet
+                        type: string
+                    required:
+                    - cidrBlock
+                    - az 
+                  privatesubnet03:
+                    type: object
+                    description: EKS node configuration parameters.
+                    properties:
+                      cidrBlock: 
+                        description: The CIDR block to asociate with the subnet in AZ 
+                        type: string
+                      az:
+                        description: Availability Zone for this subnet
+                        type: string
+                    required:
+                    - cidrBlock
+                    - az 
+                required:
+                  - region
+                  - keyName
+                  - bastion
+                  - nodes
+                  - vpcCidr
+                  - publicsubnet01
+                  - publicsubnet02
+                  - publicsubnet03
+                  - privatesubnet01
+                  - privatesubnet02
+                  - privatesubnet03
+            required:
+              - parameters
+          status:
+            description: A Status represents the observed state
+            properties:
+              eks:
+                description: Freeform field containing status information for eks
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+            type: object

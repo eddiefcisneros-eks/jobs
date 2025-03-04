@@ -1,0 +1,50 @@
+#################################################################################################################
+# The overall classification of this file is UNCLASSIFIED.
+#
+# NOTICE: This software was produced for the U. S. Government under Contract
+# No. FA8702-19-C-0001, and is subject to the Rights in Noncommercial Computer
+# Software and Noncommercial Computer Software Documentation Clause DFARS
+# 252.227-7014 (FEB 2014)
+#
+# (c) 2023 The MITRE Corporation
+#
+# PROJECT: MVP - EKS Platform Deployment Prototype - Used to automate the deployment of EKS platform on AWS.
+#
+# FILE: clusters.yaml
+# CLASSIFICATION: Unclassified
+# AUTHORS:  Thomas Yang (tzyang@mitre.org), Karpagam Balan (kbalan@mitre.org)
+# CREATED: January, 2023
+# DESCRIPTION: Helm manifest to compose and customize infrastructure to be deployed
+##################################################################################################################
+---
+{{ if .Values.infrastructure}}
+{{- range $cluster := .Values.infrastructure.EKSCluster}}
+apiVersion: eks.platformone.io/v1beta1
+kind: EKSCluster
+metadata:
+  name: {{ $cluster.name }}
+  annotations:
+    crossplane.io/external-name: {{ $cluster.name }}
+  {{- with $cluster.customlabels }}
+  labels: {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parameters:
+    nodes:
+      imageId: {{ $cluster.nodes.imageId }}
+      subnets: {{ $cluster.nodes.subnets }}
+      count: {{ $cluster.nodes.count }}
+      securityGroupIDs: {{ $cluster.nodes.securityGroupIDs }}
+      size: {{ $cluster.nodes.size }}
+    subnetIds: {{ $cluster.subnetIds }}
+    securityGroupIds: {{ $cluster.securityGroupIds }}
+    region: {{ $cluster.region }}
+    keyName: {{ $cluster.keyName }}
+    mapUsers: {{ $cluster.mapUsers }}
+    bastionRoleArn: {{ $cluster.bastionRoleArn }}
+    bastionInstanceId: {{ $cluster.bastionInstanceId }}
+    version: {{ $cluster.version }}
+{{ end }}
+{{ end }}
+
+

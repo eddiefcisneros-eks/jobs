@@ -1,0 +1,21 @@
+infrastructure:
+  RKE2Cluster: 
+  - name: demo
+    keyName: ""
+    imageId: "ami-"
+    volumeSize: 60
+    nodes:
+      count: 5
+      size: medium
+    serviceIpv4Cidr: 10.45.0.0/16
+    subnetIds:
+    - subnet-090be39ff9d0ec3b3
+    - subnet-0300a1d454d76ec7c
+    - subnet-01c9fb1fde235856e
+    securityGroupIds:
+    - sg-0213401391121f58d
+    - sg-0ac834062bbf78404
+    - sg-06d5ae646f5663620
+    - sg-0599f7fce05df6411
+    region: us-east-1
+    token: 0ae2f38f6f034610969b65211afc38a5f4c1b07785dc5d7103a760b9ac150c0e483262dc7e0de518
